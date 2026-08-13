@@ -1,14 +1,9 @@
 (function () {
     "use strict";
 
-    // Chỉ chạy trên trang có bảng điểm (tránh chèn panel vào trang không liên quan)
-    if (!document.querySelector(".score-input")) {
-        return;
-    }
-
     var CLIPBOARD_KEY = "epsaf_clipboard";
 
-    // ---------- Helpers ----------
+    // ---------- Shared helpers ----------
 
     function parseNum(str) {
         if (str === undefined || str === null) return NaN;
@@ -25,6 +20,45 @@
         input.value = value;
         input.dispatchEvent(new Event("input", { bubbles: true }));
         input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function escapeHtml(value) {
+        if (value === null || value === undefined) return "";
+        return String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    var toastTimer = null;
+    function showToast(msg) {
+        var toast = document.getElementById("epsaf-toast");
+        if (!toast) {
+            toast = document.createElement("div");
+            toast.id = "epsaf-toast";
+            document.body.appendChild(toast);
+        }
+        toast.textContent = msg;
+        toast.classList.add("epsaf-toast-show");
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () {
+            toast.classList.remove("epsaf-toast-show");
+        }, 2200);
+    }
+
+    function updateStatus(text) {
+        var el = document.getElementById("epsaf-status");
+        if (el) el.textContent = text;
+    }
+
+    // =====================================================================
+    // Trang chấm điểm chi tiết (role: Ủy viên) — CommitteeMember/InputScore
+    // =====================================================================
+
+    function isScorePage() {
+        return !!document.querySelector(".score-input");
     }
 
     function getStudentCode() {
@@ -61,7 +95,7 @@
         return true;
     }
 
-    // ---------- Điền ghi chú hàng loạt ----------
+    // ---------- Điền ghi chú hàng loạt (từng tiêu chí trong 1 phiếu) ----------
 
     function fillAllNotes(text, includeGeneral) {
         var noteInputs = document.querySelectorAll(".note-input");
@@ -162,12 +196,7 @@
         });
     }
 
-    function updateStatus(text) {
-        var el = document.getElementById("epsaf-status");
-        if (el) el.textContent = text;
-    }
-
-    function refreshStatusFromStorage() {
+    function refreshScoreStatusFromStorage() {
         chrome.storage.local.get(CLIPBOARD_KEY, function (res) {
             var payload = res[CLIPBOARD_KEY];
             if (payload) {
@@ -182,27 +211,7 @@
         });
     }
 
-    // ---------- Toast ----------
-
-    var toastTimer = null;
-    function showToast(msg) {
-        var toast = document.getElementById("epsaf-toast");
-        if (!toast) {
-            toast = document.createElement("div");
-            toast.id = "epsaf-toast";
-            document.body.appendChild(toast);
-        }
-        toast.textContent = msg;
-        toast.classList.add("epsaf-toast-show");
-        if (toastTimer) clearTimeout(toastTimer);
-        toastTimer = setTimeout(function () {
-            toast.classList.remove("epsaf-toast-show");
-        }, 2200);
-    }
-
-    // ---------- Build panel UI ----------
-
-    function buildPanel() {
+    function buildScorePanel() {
         var panel = document.createElement("div");
         panel.id = "epsaf-panel";
         panel.innerHTML =
@@ -314,12 +323,134 @@
         panel.querySelector("#epsaf-copy").addEventListener("click", copyScores);
         panel.querySelector("#epsaf-paste").addEventListener("click", pasteScores);
 
-        refreshStatusFromStorage();
+        refreshScoreStatusFromStorage();
+    }
+
+    // =====================================================================
+    // Trang tổng hợp điểm nhóm (role: Thư ký hội đồng) — CommitteeSecretary/CheckIn
+    // =====================================================================
+
+    function isSecretaryPage() {
+        return !!document.querySelector(".secretary-checkout-status[data-refresh-id]");
+    }
+
+    function getSecretaryStudentRows() {
+        return Array.prototype.map.call(
+            document.querySelectorAll(".secretary-checkout-status[data-refresh-id]"),
+            function (div) {
+                return {
+                    id: div.getAttribute("data-refresh-id") || "",
+                    rollNumber: div.getAttribute("data-roll-number") || "",
+                    fullName: div.getAttribute("data-full-name") || "",
+                    no: div.getAttribute("data-no") || ""
+                };
+            }
+        ).filter(function (r) { return r.id; });
+    }
+
+    function fillSecretaryNotes(text, ids) {
+        var applied = 0;
+        ids.forEach(function (id) {
+            var textarea = document.getElementById("txtAreaCheckOut_" + id);
+            if (!textarea || textarea.disabled) return;
+            textarea.value = text;
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+            textarea.dispatchEvent(new Event("change", { bubbles: true }));
+            applied++;
+        });
+
+        if (applied === 0) {
+            showToast("Chưa chọn sinh viên nào để điền");
+        } else {
+            showToast("Đã điền ghi chú cho " + applied + " sinh viên. Nhớ bấm Save từng dòng để lưu.");
+        }
+        return applied;
+    }
+
+    function buildSecretaryPanel() {
+        var rows = getSecretaryStudentRows();
+        if (!rows.length) return;
+
+        var listHtml = rows.map(function (r) {
+            var labelText = (r.no ? r.no + ". " : "") + r.rollNumber + " - " + r.fullName;
+            return '<label class="epsaf-student-item">' +
+                '<input type="checkbox" class="epsaf-student-checkbox" value="' + escapeHtml(r.id) + '" checked>' +
+                "<span>" + escapeHtml(labelText) + "</span>" +
+            "</label>";
+        }).join("");
+
+        var panel = document.createElement("div");
+        panel.id = "epsaf-panel";
+        panel.innerHTML =
+            '<div id="epsaf-header">' +
+                '<span>⚡ Ghi chú hàng loạt</span>' +
+                '<button type="button" id="epsaf-toggle" title="Thu gọn / Mở rộng">–</button>' +
+            "</div>" +
+            '<div id="epsaf-body">' +
+                '<div class="epsaf-secretary-intro">Chọn sinh viên trong nhóm rồi nhập nội dung để điền hàng loạt vào ô "Ghi chú nộp bài":</div>' +
+                '<div id="epsaf-student-list">' + listHtml + "</div>" +
+                '<div class="epsaf-select-row">' +
+                    '<button type="button" id="epsaf-select-all" class="epsaf-link-btn">Chọn tất cả</button>' +
+                    '<button type="button" id="epsaf-select-none" class="epsaf-link-btn">Bỏ chọn tất cả</button>' +
+                "</div>" +
+                '<textarea id="epsaf-secretary-note-text" rows="3" placeholder="Nội dung ghi chú nộp bài..."></textarea>' +
+                '<button type="button" id="epsaf-secretary-fill" class="epsaf-fill-btn epsaf-fill-btn-block">Điền cho SV đã chọn</button>' +
+                '<div id="epsaf-status">' + rows.length + ' sinh viên trong nhóm</div>' +
+            "</div>";
+        document.body.appendChild(panel);
+
+        var body = panel.querySelector("#epsaf-body");
+        var toggleBtn = panel.querySelector("#epsaf-toggle");
+        toggleBtn.addEventListener("click", function () {
+            var collapsed = body.style.display === "none";
+            body.style.display = collapsed ? "" : "none";
+            toggleBtn.textContent = collapsed ? "–" : "+";
+        });
+
+        panel.querySelector("#epsaf-select-all").addEventListener("click", function () {
+            panel.querySelectorAll(".epsaf-student-checkbox").forEach(function (cb) { cb.checked = true; });
+        });
+        panel.querySelector("#epsaf-select-none").addEventListener("click", function () {
+            panel.querySelectorAll(".epsaf-student-checkbox").forEach(function (cb) { cb.checked = false; });
+        });
+
+        function doFill() {
+            var text = panel.querySelector("#epsaf-secretary-note-text").value;
+            if (!text || !text.trim()) {
+                showToast("Chưa nhập nội dung ghi chú");
+                return;
+            }
+            var ids = Array.prototype.filter.call(
+                panel.querySelectorAll(".epsaf-student-checkbox"),
+                function (cb) { return cb.checked; }
+            ).map(function (cb) { return cb.value; });
+            fillSecretaryNotes(text, ids);
+        }
+
+        panel.querySelector("#epsaf-secretary-fill").addEventListener("click", doFill);
+
+        // Ctrl+Enter (hoặc Cmd+Enter) trong textarea để điền nhanh, không chặn Enter xuống dòng
+        panel.querySelector("#epsaf-secretary-note-text").addEventListener("keydown", function (e) {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                doFill();
+            }
+        });
+    }
+
+    // ---------- Init ----------
+
+    function init() {
+        if (isScorePage()) {
+            buildScorePanel();
+        } else if (isSecretaryPage()) {
+            buildSecretaryPanel();
+        }
     }
 
     if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", buildPanel);
+        document.addEventListener("DOMContentLoaded", init);
     } else {
-        buildPanel();
+        init();
     }
 })();
