@@ -516,6 +516,219 @@
         });
     }
 
+    // =====================================================================
+    // Trang duyệt điểm nhóm (role: Chủ tịch hội đồng) — CommitteeChair/CheckIn
+    // =====================================================================
+
+    function isChairPage() {
+        var ths = document.querySelectorAll("th");
+        for (var i = 0; i < ths.length; i++) {
+            if (ths[i].textContent.trim() === "Duyệt") return true;
+        }
+        return false;
+    }
+
+    function getChairToken() {
+        var form = document.getElementById("__AjaxAntiForgeryForm");
+        var input = form
+            ? form.querySelector('input[name="__RequestVerificationToken"]')
+            : document.querySelector('input[name="__RequestVerificationToken"]');
+        return input ? input.value : "";
+    }
+
+    // Đọc danh sách sinh viên đang chờ duyệt trực tiếp từ các liên kết "Duyệt điểm"
+    // có sẵn trên trang (onclick="Approve(scheduleID, studentID)"), không cần đụng
+    // tới hàm JS của trang (chạy ở world khác nên content script không gọi thẳng được).
+    function getPendingApprovals() {
+        var results = [];
+        document.querySelectorAll('a[onclick^="Approve("]').forEach(function (a) {
+            var match = /Approve\(\s*(\d+)\s*,\s*(\d+)\s*\)/.exec(a.getAttribute("onclick") || "");
+            if (!match) return;
+            var row = a.closest("tr");
+            var rollNumber = "";
+            var fullName = "";
+            if (row && row.children && row.children.length > 2) {
+                rollNumber = (row.children[1].textContent || "").trim();
+                fullName = (row.children[2].textContent || "").trim();
+            }
+            results.push({
+                scheduleID: match[1],
+                studentID: match[2],
+                rollNumber: rollNumber,
+                fullName: fullName
+            });
+        });
+        return results;
+    }
+
+    function countApprovedRows() {
+        return document.querySelectorAll('.fa-check-circle[title="Đã duyệt"]').length;
+    }
+
+    // Gọi thẳng API duyệt điểm (giống hệt request mà nút Duyệt gốc gửi đi),
+    // để không phải bật hộp thoại xác nhận riêng cho từng sinh viên.
+    async function approveOne(scheduleID, studentID, token) {
+        var body = new URLSearchParams();
+        body.set("scheduleID", scheduleID);
+        body.set("studentID", studentID);
+        body.set("__RequestVerificationToken", token);
+
+        var res;
+        try {
+            res = await fetch("/eproject/api/CommitteeChair/Approve", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "X-Requested-With": "XMLHttpRequest" },
+                body: body
+            });
+        } catch (e) {
+            return { ok: false, message: "Lỗi kết nối" };
+        }
+
+        if (!res.ok) {
+            return { ok: false, message: "HTTP " + res.status };
+        }
+
+        var data;
+        try {
+            data = await res.json();
+        } catch (e) {
+            return { ok: false, message: "Không đọc được phản hồi" };
+        }
+
+        if (data && data.codeError === 0) {
+            return { ok: true, message: data.data };
+        }
+        return { ok: false, message: (data && data.data) || "Lỗi không xác định" };
+    }
+
+    async function doApproveAll(items, panel) {
+        if (!items.length) {
+            showToast("Chưa chọn sinh viên nào để duyệt");
+            return;
+        }
+
+        var token = getChairToken();
+        if (!token) {
+            showToast("Không tìm thấy token xác thực, thử tải lại trang");
+            return;
+        }
+
+        var confirmed = window.confirm(
+            "Duyệt điểm cho " + items.length + " sinh viên đã chọn?\n" +
+            "Thao tác sẽ thực hiện ngay cho tất cả, không hỏi lại từng người."
+        );
+        if (!confirmed) return;
+
+        var approveBtn = panel.querySelector("#epsaf-approve-all");
+        if (approveBtn) approveBtn.disabled = true;
+
+        var successCount = 0;
+        var failMessages = [];
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            updateStatus("Đang duyệt " + (i + 1) + "/" + items.length + " — " + (item.rollNumber || item.fullName));
+            var result = await approveOne(item.scheduleID, item.studentID, token);
+            if (result.ok) {
+                successCount++;
+            } else {
+                failMessages.push((item.rollNumber || item.fullName || "?") + ": " + result.message);
+            }
+        }
+
+        if (approveBtn) approveBtn.disabled = false;
+
+        var summary = "Đã duyệt " + successCount + "/" + items.length + " sinh viên.";
+        if (failMessages.length) {
+            summary += "\n\nCác trường hợp lỗi:\n" + failMessages.join("\n");
+        }
+        window.alert(summary);
+        if (successCount > 0) {
+            try {
+                location.reload();
+            } catch (e) {
+                // môi trường không hỗ trợ reload (hiếm gặp) — bỏ qua, trạng thái trên trang
+                // có thể chưa cập nhật nhưng dữ liệu đã được duyệt thành công phía server.
+            }
+        }
+    }
+
+    function buildChairPanel() {
+        var pending = getPendingApprovals();
+        var approvedCount = countApprovedRows();
+
+        var listHtml = pending.map(function (item, index) {
+            var labelText = (item.rollNumber ? item.rollNumber + " - " : "") + item.fullName;
+            return '<label class="epsaf-student-item">' +
+                '<input type="checkbox" class="epsaf-student-checkbox" data-index="' + index + '" checked>' +
+                "<span>" + escapeHtml(labelText) + "</span>" +
+            "</label>";
+        }).join("");
+
+        var panel = document.createElement("div");
+        panel.id = "epsaf-panel";
+
+        if (!pending.length) {
+            panel.innerHTML =
+                '<div id="epsaf-header">' +
+                    '<span>⚡ Duyệt điểm hàng loạt</span>' +
+                    '<button type="button" id="epsaf-toggle" title="Thu gọn / Mở rộng">–</button>' +
+                "</div>" +
+                '<div id="epsaf-body">' +
+                    '<div class="epsaf-secretary-intro">Tất cả sinh viên trong nhóm (' + approvedCount + ') đã được duyệt điểm. Không còn ai đang chờ duyệt.</div>' +
+                "</div>";
+            document.body.appendChild(panel);
+            var toggleBtnDone = panel.querySelector("#epsaf-toggle");
+            var bodyDone = panel.querySelector("#epsaf-body");
+            toggleBtnDone.addEventListener("click", function () {
+                var collapsed = bodyDone.style.display === "none";
+                bodyDone.style.display = collapsed ? "" : "none";
+                toggleBtnDone.textContent = collapsed ? "–" : "+";
+            });
+            return;
+        }
+
+        panel.innerHTML =
+            '<div id="epsaf-header">' +
+                '<span>⚡ Duyệt điểm hàng loạt</span>' +
+                '<button type="button" id="epsaf-toggle" title="Thu gọn / Mở rộng">–</button>' +
+            "</div>" +
+            '<div id="epsaf-body">' +
+                '<div class="epsaf-secretary-intro">' + approvedCount + ' sinh viên đã duyệt, ' + pending.length + ' sinh viên đang chờ. Chọn người muốn duyệt rồi bấm nút bên dưới — chỉ hỏi xác nhận một lần cho toàn bộ lượt chọn:</div>' +
+                '<div id="epsaf-student-list">' + listHtml + "</div>" +
+                '<div class="epsaf-select-row">' +
+                    '<button type="button" id="epsaf-select-all" class="epsaf-link-btn">Chọn tất cả</button>' +
+                    '<button type="button" id="epsaf-select-none" class="epsaf-link-btn">Bỏ chọn tất cả</button>' +
+                "</div>" +
+                '<button type="button" id="epsaf-approve-all" class="epsaf-fill-btn epsaf-fill-btn-block">✅ Duyệt tất cả sinh viên đã chọn</button>' +
+                '<div id="epsaf-status">' + pending.length + ' sinh viên đang chờ duyệt</div>' +
+            "</div>";
+        document.body.appendChild(panel);
+
+        var body = panel.querySelector("#epsaf-body");
+        var toggleBtn = panel.querySelector("#epsaf-toggle");
+        toggleBtn.addEventListener("click", function () {
+            var collapsed = body.style.display === "none";
+            body.style.display = collapsed ? "" : "none";
+            toggleBtn.textContent = collapsed ? "–" : "+";
+        });
+
+        panel.querySelector("#epsaf-select-all").addEventListener("click", function () {
+            panel.querySelectorAll(".epsaf-student-checkbox").forEach(function (cb) { cb.checked = true; });
+        });
+        panel.querySelector("#epsaf-select-none").addEventListener("click", function () {
+            panel.querySelectorAll(".epsaf-student-checkbox").forEach(function (cb) { cb.checked = false; });
+        });
+
+        panel.querySelector("#epsaf-approve-all").addEventListener("click", function () {
+            var selected = Array.prototype.filter.call(
+                panel.querySelectorAll(".epsaf-student-checkbox"),
+                function (cb) { return cb.checked; }
+            ).map(function (cb) { return pending[parseInt(cb.getAttribute("data-index"), 10)]; });
+            doApproveAll(selected, panel);
+        });
+    }
+
     // ---------- Init ----------
 
     function init() {
@@ -523,6 +736,8 @@
             buildScorePanel();
         } else if (isSecretaryPage()) {
             buildSecretaryPanel();
+        } else if (isChairPage()) {
+            buildChairPanel();
         }
     }
 

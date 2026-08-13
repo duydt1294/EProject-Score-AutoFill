@@ -41,7 +41,17 @@ Khi mở trang tổng hợp điểm của cả một nhóm, panel "⚡ Ghi chú 
 - Mặc định chỉ điền vào ô còn trống, **không đè lên nội dung đã viết**. Có tuỳ chọn ghi đè nếu muốn thay thế toàn bộ.
 - Đây chỉ là nội dung mẫu để gợi ý — **cần đọc lại và chỉnh sửa cho đúng với từng trường hợp cụ thể** trước khi lưu.
 
+## Chế độ duyệt điểm
+
+Khi mở trang có cột "Duyệt" cho từng thành viên trong nhóm, panel "⚡ Duyệt điểm hàng loạt" xuất hiện, liệt kê những người đang chờ duyệt kèm checkbox (mặc định chọn hết).
+
+- Bỏ chọn riêng ai đó nếu chưa muốn duyệt, hoặc dùng **Chọn tất cả / Bỏ chọn tất cả**.
+- Bấm **✅ Duyệt tất cả sinh viên đã chọn**: chỉ hiện **một** hộp thoại xác nhận duy nhất cho toàn bộ lượt chọn, thay vì phải xác nhận riêng từng người như thao tác gốc.
+- Sau khi xác nhận, extension xử lý lần lượt từng người đã chọn và hiển thị **một** thông báo tổng kết duy nhất (số lượng thành công / các trường hợp lỗi nếu có), rồi tự tải lại trang để cập nhật trạng thái.
+- Nếu tất cả thành viên trong nhóm đã được duyệt từ trước, panel chỉ hiển thị thông tin, không có nút thao tác.
+
 ## Lưu ý chung
 
-- Extension không tự động bấm nút lưu ở bất kỳ đâu — luôn để bạn kiểm tra lại trước khi lưu.
+- Ở chế độ chấm điểm chi tiết và chế độ tổng hợp theo nhóm, extension chỉ điền vào ô — **không tự lưu**, luôn để bạn kiểm tra lại trước khi lưu.
+- Riêng thao tác duyệt điểm là hành động ghi nhận ngay lập tức sau khi xác nhận (gộp nhiều lượt duyệt vào một lần xác nhận), vì đây vốn là một thao tác xác nhận hàng loạt theo yêu cầu, không phải điền nháp.
 - Dữ liệu copy được lưu tạm trong bộ nhớ trình duyệt, tồn tại đến khi bạn copy đè lượt khác.

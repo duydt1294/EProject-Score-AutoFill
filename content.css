@@ -252,6 +252,19 @@
     margin-bottom: 4px;
 }
 
+#epsaf-approve-all {
+    background: #00a65a;
+}
+
+#epsaf-approve-all:hover {
+    background: #008d4c;
+}
+
+#epsaf-approve-all:disabled {
+    background: #9bd6b8;
+    cursor: not-allowed;
+}
+
 #epsaf-fill-committee-notes {
     background: #f39c12;
 }
