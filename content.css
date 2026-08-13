@@ -53,9 +53,23 @@
 }
 
 .epsaf-row label {
-    flex: 0 0 52px;
+    flex: 0 0 64px;
     font-weight: 500;
     margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: default;
+}
+
+#epsaf-score-groups {
+    max-height: 190px;
+    overflow-y: auto;
+    margin-bottom: 2px;
+}
+
+#epsaf-score-groups .epsaf-row {
+    margin-right: 2px;
 }
 
 .epsaf-row input {
@@ -235,4 +249,13 @@
     text-align: center;
     padding: 7px;
     font-weight: 600;
+    margin-bottom: 4px;
+}
+
+#epsaf-fill-committee-notes {
+    background: #f39c12;
+}
+
+#epsaf-fill-committee-notes:hover {
+    background: #d98c0f;
 }

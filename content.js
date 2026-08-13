@@ -72,6 +72,41 @@
         return "";
     }
 
+    // ---------- Nhận diện động các nhóm tiêu chí trên phiếu ----------
+    // Không hardcode TAILIEUDUAN/NHOM/CANHAN — đọc trực tiếp từ data-criteriatype
+    // của các ô điểm đang có trên trang, để khi trường/môn đổi bộ tiêu chí
+    // (đổi tên nhóm, thêm/bớt nhóm...) panel vẫn tự bắt kịp mà không cần sửa code.
+
+    function deriveGroupLabel(inp, type) {
+        var row = inp.closest("tr");
+        if (row && row.children && row.children.length > 2) {
+            var nameCell = row.children[2]; // cột "Tên tiêu chí"
+            var text = (nameCell.textContent || "").trim();
+            var dashIdx = text.indexOf(" - ");
+            if (dashIdx > 0) {
+                return text.substring(0, dashIdx).trim();
+            }
+        }
+        // fallback: viết hoa chữ cái đầu của mã tiêu chí thô, ví dụ TAILIEUDUAN -> Tailieuduan
+        if (!type) return "Khác";
+        return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+    }
+
+    function getScoreGroups() {
+        var order = [];
+        var groupsByType = {};
+        document.querySelectorAll(".score-input").forEach(function (inp) {
+            var type = (inp.getAttribute("data-criteriatype") || "").trim();
+            if (!type) return;
+            if (!groupsByType[type]) {
+                groupsByType[type] = { type: type, label: deriveGroupLabel(inp, type), count: 0 };
+                order.push(type);
+            }
+            groupsByType[type].count++;
+        });
+        return order.map(function (type) { return groupsByType[type]; });
+    }
+
     // ---------- Group auto-fill ----------
 
     function fillGroup(type, rawValue) {
@@ -82,7 +117,10 @@
         }
         num = clamp0to10(num);
         var formatted = num.toFixed(1);
-        var inputs = document.querySelectorAll('.score-input[data-criteriatype="' + type + '"]');
+        var inputs = Array.prototype.filter.call(
+            document.querySelectorAll(".score-input"),
+            function (inp) { return (inp.getAttribute("data-criteriatype") || "").trim() === type; }
+        );
         if (!inputs.length) {
             showToast("Không tìm thấy nhóm điểm này trên trang");
             return false;
@@ -212,6 +250,16 @@
     }
 
     function buildScorePanel() {
+        var groups = getScoreGroups();
+        var groupsHtml = groups.map(function (g, index) {
+            var inputId = "epsaf-group-" + index;
+            return '<div class="epsaf-row epsaf-score-row">' +
+                '<label title="' + escapeHtml(g.label + " (" + g.type + ")") + '">' + escapeHtml(g.label) + '</label>' +
+                '<input type="text" inputmode="decimal" id="' + inputId + '" placeholder="0-10">' +
+                '<button type="button" class="epsaf-fill-btn" data-type="' + escapeHtml(g.type) + '" data-input="' + inputId + '">Điền</button>' +
+            "</div>";
+        }).join("");
+
         var panel = document.createElement("div");
         panel.id = "epsaf-panel";
         panel.innerHTML =
@@ -220,21 +268,8 @@
                 '<button type="button" id="epsaf-toggle" title="Thu gọn / Mở rộng">–</button>' +
             "</div>" +
             '<div id="epsaf-body">' +
-                '<div class="epsaf-row epsaf-score-row">' +
-                    '<label>Tài liệu</label>' +
-                    '<input type="text" inputmode="decimal" id="epsaf-tailieu" placeholder="0-10">' +
-                    '<button type="button" class="epsaf-fill-btn" data-type="TAILIEUDUAN" data-input="epsaf-tailieu">Điền</button>' +
-                "</div>" +
-                '<div class="epsaf-row epsaf-score-row">' +
-                    '<label>Nhóm</label>' +
-                    '<input type="text" inputmode="decimal" id="epsaf-nhom" placeholder="0-10">' +
-                    '<button type="button" class="epsaf-fill-btn" data-type="NHOM" data-input="epsaf-nhom">Điền</button>' +
-                "</div>" +
-                '<div class="epsaf-row epsaf-score-row">' +
-                    '<label>Cá nhân</label>' +
-                    '<input type="text" inputmode="decimal" id="epsaf-canhan" placeholder="0-10">' +
-                    '<button type="button" class="epsaf-fill-btn" data-type="CANHAN" data-input="epsaf-canhan">Điền</button>' +
-                "</div>" +
+                '<div id="epsaf-score-groups">' + groupsHtml + "</div>" +
+                (groups.length ? "" : '<div class="epsaf-secretary-intro">Không phát hiện được nhóm tiêu chí nào trên phiếu này.</div>') +
                 '<div class="epsaf-row">' +
                     '<label>Ghi chú</label>' +
                     '<input type="text" id="epsaf-note-text" placeholder="Nội dung ghi chú">' +
@@ -296,18 +331,13 @@
             }
         });
 
-        // Fill all three score groups + ghi chú cùng lúc (bỏ qua ô nào để trống)
+        // Điền tất cả các nhóm điểm đã phát hiện + ghi chú cùng lúc (bỏ qua ô nào để trống)
         panel.querySelector("#epsaf-fill-all").addEventListener("click", function () {
-            var map = [
-                ["TAILIEUDUAN", "epsaf-tailieu"],
-                ["NHOM", "epsaf-nhom"],
-                ["CANHAN", "epsaf-canhan"]
-            ];
             var any = false;
-            map.forEach(function (pair) {
-                var val = document.getElementById(pair[1]).value;
+            groups.forEach(function (g, index) {
+                var val = document.getElementById("epsaf-group-" + index).value;
                 if (val !== undefined && val.trim() !== "") {
-                    any = fillGroup(pair[0], val) || any;
+                    any = fillGroup(g.type, val) || any;
                 }
             });
 
@@ -367,6 +397,43 @@
         return applied;
     }
 
+    // Gợi ý nội dung chung chung cho các ô nhận xét bắt buộc của hội đồng —
+    // chỉ để có sẵn ý tưởng ban đầu, người dùng cần đọc lại và chỉnh sửa
+    // cho đúng với từng đề tài trước khi lưu.
+    var SECRETARY_NOTE_TEMPLATES = {
+        ResearchNote: "Đề tài thể hiện tính nghiên cứu ở mức tìm hiểu, phân tích và lựa chọn giải pháp/công nghệ phù hợp với bài toán đặt ra. Nhóm có tham khảo tài liệu liên quan trước khi triển khai.",
+        ApplicationNote: "Sản phẩm có khả năng ứng dụng thực tế, giải quyết được nhu cầu cụ thể mà đề tài đặt ra và có thể tiếp tục mở rộng, triển khai thêm trong môi trường thực tế.",
+        StrengthNote: "Nhóm nắm được kiến thức nền tảng liên quan đến đề tài, trình bày rõ ràng, sản phẩm hoạt động ổn định và đáp ứng được các chức năng chính đã đề ra.",
+        WeaknessNote: "Một số chức năng còn cần tối ưu thêm, tài liệu/báo cáo chưa thực sự chi tiết ở một số phần, cần bổ sung thêm test case và xử lý các trường hợp ngoại lệ.",
+        ConclusionNote: "Đề tài đáp ứng yêu cầu của một khoá luận/đồ án tốt nghiệp. Đề nghị nhóm tiếp tục hoàn thiện các hạn chế đã nêu để có thể triển khai hoặc mở rộng thêm trong tương lai."
+    };
+
+    function fillSuggestedCommitteeNotes(overwrite) {
+        var applied = 0;
+        var skipped = 0;
+        Object.keys(SECRETARY_NOTE_TEMPLATES).forEach(function (id) {
+            var el = document.getElementById(id);
+            if (!el || el.disabled) return;
+            if (!overwrite && el.value && el.value.trim() !== "") {
+                skipped++;
+                return;
+            }
+            el.value = SECRETARY_NOTE_TEMPLATES[id];
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            applied++;
+        });
+
+        if (applied === 0 && skipped > 0) {
+            showToast("Các ô đã có nội dung, tick \"Ghi đè\" nếu muốn thay thế");
+        } else if (applied === 0) {
+            showToast("Không tìm thấy ô nhận xét hội đồng trên trang này");
+        } else {
+            showToast("Đã điền gợi ý cho " + applied + " ô nhận xét — nhớ đọc lại và chỉnh sửa cho đúng đề tài");
+        }
+        return applied;
+    }
+
     function buildSecretaryPanel() {
         var rows = getSecretaryStudentRows();
         if (!rows.length) return;
@@ -395,6 +462,12 @@
                 "</div>" +
                 '<textarea id="epsaf-secretary-note-text" rows="3" placeholder="Nội dung ghi chú nộp bài..."></textarea>' +
                 '<button type="button" id="epsaf-secretary-fill" class="epsaf-fill-btn epsaf-fill-btn-block">Điền cho SV đã chọn</button>' +
+                '<hr>' +
+                '<div class="epsaf-secretary-intro">Điền sẵn nội dung gợi ý (chung chung) cho 5 ô nhận xét bắt buộc của hội đồng để có ý tưởng, bạn nên đọc lại và chỉnh sửa cho đúng đề tài trước khi lưu:</div>' +
+                '<label class="epsaf-checkbox-label">' +
+                    '<input type="checkbox" id="epsaf-note-overwrite"> Ghi đè nội dung đã có' +
+                "</label>" +
+                '<button type="button" id="epsaf-fill-committee-notes" class="epsaf-fill-btn epsaf-fill-btn-block">💡 Điền gợi ý nhận xét hội đồng</button>' +
                 '<div id="epsaf-status">' + rows.length + ' sinh viên trong nhóm</div>' +
             "</div>";
         document.body.appendChild(panel);
@@ -435,6 +508,11 @@
                 e.preventDefault();
                 doFill();
             }
+        });
+
+        panel.querySelector("#epsaf-fill-committee-notes").addEventListener("click", function () {
+            var overwrite = panel.querySelector("#epsaf-note-overwrite").checked;
+            fillSuggestedCommitteeNotes(overwrite);
         });
     }
 
