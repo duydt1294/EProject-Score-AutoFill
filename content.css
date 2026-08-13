@@ -1,0 +1,166 @@
+#epsaf-panel {
+    position: fixed;
+    top: 90px;
+    right: 16px;
+    width: 250px;
+    background: #ffffff;
+    border: 1px solid #d8dde3;
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    z-index: 2147483000;
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-size: 13px;
+    color: #333;
+}
+
+#epsaf-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: #3c8dbc;
+    color: #fff;
+    border-radius: 8px 8px 0 0;
+    font-weight: 600;
+    cursor: default;
+}
+
+#epsaf-header button {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: #fff;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    line-height: 1;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+#epsaf-header button:hover {
+    background: rgba(255, 255, 255, 0.35);
+}
+
+#epsaf-body {
+    padding: 10px;
+}
+
+.epsaf-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.epsaf-row label {
+    flex: 0 0 52px;
+    font-weight: 500;
+    margin: 0;
+}
+
+.epsaf-row input {
+    flex: 1 1 auto;
+    width: 0;
+    padding: 4px 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    text-align: center;
+}
+
+.epsaf-fill-btn {
+    flex: 0 0 auto;
+    background: #3c8dbc;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+
+.epsaf-fill-btn:hover {
+    background: #367fa9;
+}
+
+#epsaf-fill-all {
+    width: 100%;
+    margin-top: 2px;
+    padding: 6px;
+    background: #00a65a;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+#epsaf-fill-all:hover {
+    background: #008d4c;
+}
+
+.epsaf-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 400;
+    color: #555;
+    margin: 2px 0 8px 0;
+    cursor: pointer;
+}
+
+.epsaf-checkbox-label input {
+    margin: 0;
+}
+
+#epsaf-panel hr {
+    margin: 10px 0;
+    border: none;
+    border-top: 1px solid #eee;
+}
+
+.epsaf-copy-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.epsaf-copy-row button {
+    padding: 6px;
+    border: 1px solid #ccc;
+    background: #f4f6f8;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.epsaf-copy-row button:hover {
+    background: #e9edf0;
+}
+
+#epsaf-status {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #777;
+    line-height: 1.4;
+}
+
+#epsaf-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: #333;
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 2147483001;
+    pointer-events: none;
+}
+
+#epsaf-toast.epsaf-toast-show {
+    opacity: 1;
+    transform: translateY(0);
+}
