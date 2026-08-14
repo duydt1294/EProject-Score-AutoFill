@@ -2,16 +2,18 @@
   "manifest_version": 3,
   "name": "EProject Score Auto-Fill",
   "version": "1.0.0",
-  "description": "Tu dong dien diem theo nhom (Tai lieu / Nhom / Ca nhan) va copy-dan diem giua cac sinh vien tren trang cham diem EProject.",
+  "description": "Ho tro dien diem, ghi chu hang loat, duyet diem va dong bo diem qua Firebase tren cac he thong cham diem dung chung domain e360.poly.edu.vn.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://e360.poly.edu.vn/*",
+    "https://identitytoolkit.googleapis.com/*",
+    "https://fir-99209.firebaseio.com/*",
     "file:///*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "https://e360.poly.edu.vn/eproject/*",
+        "https://e360.poly.edu.vn/*",
         "file:///*"
       ],
       "js": ["content.js"],

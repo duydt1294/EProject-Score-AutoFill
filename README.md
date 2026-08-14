@@ -50,8 +50,24 @@ Khi mở trang có cột "Duyệt" cho từng thành viên trong nhóm, panel "�
 - Sau khi xác nhận, extension xử lý lần lượt từng người đã chọn và hiển thị **một** thông báo tổng kết duy nhất (số lượng thành công / các trường hợp lỗi nếu có), rồi tự tải lại trang để cập nhật trạng thái.
 - Nếu tất cả thành viên trong nhóm đã được duyệt từ trước, panel chỉ hiển thị thông tin, không có nút thao tác.
 
+## Chế độ chấm bài thi (hệ thống khác, cùng domain)
+
+Khi mở phiếu chấm bài thi có danh sách tiêu chí phẳng kèm hệ số riêng từng dòng (không chia theo nhóm), panel "⚡ Auto điền điểm thi" xuất hiện.
+
+**Điền điểm tổng theo hệ số**
+- Nhập điểm tổng mong muốn rồi bấm **Điền** (hoặc Enter). Extension tự chia giá trị này vào từng ô theo đúng hệ số của ô đó, sao cho:
+  - Tổng có trọng số (đúng công thức và cách làm tròn của trang) khớp chính xác với điểm đã nhập.
+  - Các ô không được điền bằng nhau hết (trừ trường hợp điểm tổng ở biên 0 hoặc 10, khi đó gần như không còn dư địa để tạo khác biệt).
+  - Chênh lệch giữa ô cao nhất và ô thấp nhất không vượt quá 3 điểm.
+- Vẫn có ô **Ghi chú** điền hàng loạt như chế độ chấm điểm chi tiết.
+
+**Gửi / lấy điểm qua Firebase (lưu tạm 2 giờ)**
+- **📤 Chia sẻ điểm + nhận xét**: gửi mã sinh viên, mã môn (rút gọn từ mã tiêu chí, ví dụ `GAM111.P.1` → `GAM111`), toàn bộ điểm từng ô và ghi chú chung lên Firebase. Chặn gửi nếu còn ô điểm trống.
+- **📥 Tham khảo điểm + nhận xét**: tự tìm theo đúng mã sinh viên + mã môn của phiếu đang mở, điền lại các ô điểm và ghi chú chung nếu tìm thấy. Báo "không tìm thấy" nếu chưa từng chia sẻ hoặc bản ghi đã quá 2 giờ.
+- Dữ liệu trên Firebase tự động bị coi là hết hạn và bị xoá ngay khi có ai bấm "Lấy điểm" sau mốc 2 giờ kể từ lúc gửi.
+
 ## Lưu ý chung
 
-- Ở chế độ chấm điểm chi tiết và chế độ tổng hợp theo nhóm, extension chỉ điền vào ô — **không tự lưu**, luôn để bạn kiểm tra lại trước khi lưu.
-- Riêng thao tác duyệt điểm là hành động ghi nhận ngay lập tức sau khi xác nhận (gộp nhiều lượt duyệt vào một lần xác nhận), vì đây vốn là một thao tác xác nhận hàng loạt theo yêu cầu, không phải điền nháp.
-- Dữ liệu copy được lưu tạm trong bộ nhớ trình duyệt, tồn tại đến khi bạn copy đè lượt khác.
+- Ở các chế độ điền điểm/ghi chú, extension chỉ điền vào ô — **không tự lưu**, luôn để bạn kiểm tra lại trước khi lưu. Riêng "Chia sẻ điểm + nhận xét" là hành động ghi ngay lập tức khi bấm (không phải điền nháp), vì đây là nơi lưu trữ tạm để chuyển điểm qua lại, không phải điểm chính thức của hệ thống.
+- Thao tác duyệt điểm cũng là hành động ghi nhận ngay lập tức sau khi xác nhận (gộp nhiều lượt duyệt vào một lần xác nhận), vì đây vốn là một thao tác xác nhận hàng loạt theo yêu cầu, không phải điền nháp.
+- Dữ liệu copy giữa các phiếu (chế độ chấm điểm chi tiết) được lưu tạm trong bộ nhớ trình duyệt, tồn tại đến khi bạn copy đè lượt khác.

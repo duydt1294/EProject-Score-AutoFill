@@ -3,6 +3,143 @@
 
     var CLIPBOARD_KEY = "epsaf_clipboard";
 
+    // =====================================================================
+    // Firebase (Realtime Database + Anonymous Auth) — lưu/lấy điểm bài thi
+    // cuối môn tạm thời (tự hết hạn sau 2 giờ). Chỉ gọi REST API bằng fetch,
+    // không nhúng SDK Firebase để giữ extension nhẹ và dễ debug.
+    // FIREBASE_HELPERS_START
+
+    var FIREBASE_CONFIG = {
+        apiKey: "AIzaSyDLvN8hIUjI-zDAdg7Rrsl38PsrIBJIBKs",
+        databaseURL: "https://fir-99209.firebaseio.com"
+    };
+
+    var FIREBASE_TTL_MS = 2 * 60 * 60 * 1000; // 2 giờ
+
+    var firebaseAuthState = { idToken: null, expiresAt: 0 };
+
+    // Đăng nhập ẩn danh (không cần người dùng thao tác gì) và cache token
+    // trong bộ nhớ của trang hiện tại — đủ dùng cho cả phiên chấm bài.
+    async function ensureFirebaseAuth() {
+        if (firebaseAuthState.idToken && Date.now() < firebaseAuthState.expiresAt) {
+            return firebaseAuthState.idToken;
+        }
+
+        var res = await fetch(
+            "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + FIREBASE_CONFIG.apiKey,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ returnSecureToken: true })
+            }
+        );
+        if (!res.ok) {
+            throw new Error("Không đăng nhập được Firebase (HTTP " + res.status + ")");
+        }
+        var data = await res.json();
+        if (!data || !data.idToken) {
+            throw new Error("Phản hồi đăng nhập Firebase không hợp lệ");
+        }
+
+        firebaseAuthState.idToken = data.idToken;
+        var expiresInMs = (parseInt(data.expiresIn, 10) || 3600) * 1000;
+        // trừ hao 5 phút để không dùng token sát lúc hết hạn
+        firebaseAuthState.expiresAt = Date.now() + expiresInMs - 5 * 60 * 1000;
+        return firebaseAuthState.idToken;
+    }
+
+    // "GAM111.P.1" -> "GAM111"
+    function getSubjectCode(rawCode) {
+        if (!rawCode) return "";
+        var parts = String(rawCode).trim().split(".");
+        return parts[0] || "";
+    }
+
+    // Realtime Database không cho phép key chứa . # $ [ ] /
+    function firebaseSafeKey(str) {
+        return String(str || "").replace(/[.#$[\]/]/g, "_");
+    }
+
+    function firebaseScorePath(subjectCode, studentCode) {
+        return "/examScores/" + firebaseSafeKey(subjectCode) + "/" + firebaseSafeKey(studentCode);
+    }
+
+    // Dọn các bản ghi khác đã hết hạn trong cùng mã môn (best-effort, không chặn
+    // luồng gửi điểm chính nếu có lỗi) — giúp dữ liệu không nằm lại vô thời hạn
+    // chỉ vì không ai bấm "Lấy điểm" đúng bản ghi đó sau khi hết hạn.
+    async function pruneExpiredSiblings(subjectCode, token) {
+        var listUrl = FIREBASE_CONFIG.databaseURL + "/examScores/" + firebaseSafeKey(subjectCode) + ".json?auth=" + token;
+        var res = await fetch(listUrl, { method: "GET" });
+        if (!res.ok) return;
+        var data = await res.json();
+        if (!data) return;
+
+        var now = Date.now();
+        var deletions = [];
+        Object.keys(data).forEach(function (studentKey) {
+            var record = data[studentKey];
+            if (record && record.expiresAt && now > record.expiresAt) {
+                var delUrl = FIREBASE_CONFIG.databaseURL + "/examScores/" + firebaseSafeKey(subjectCode) + "/" + studentKey + ".json?auth=" + token;
+                deletions.push(fetch(delUrl, { method: "DELETE" }).catch(function () {}));
+            }
+        });
+        if (deletions.length) await Promise.all(deletions);
+        return deletions.length;
+    }
+
+    // payload: { studentCode, subjectCode, scores: {...}, note }
+    async function sendScoreToFirebase(payload) {
+        var token = await ensureFirebaseAuth();
+        var url = FIREBASE_CONFIG.databaseURL + firebaseScorePath(payload.subjectCode, payload.studentCode) + ".json?auth=" + token;
+
+        var now = Date.now();
+        var body = {
+            studentCode: payload.studentCode,
+            subjectCode: payload.subjectCode,
+            scores: payload.scores,
+            note: payload.note || "",
+            updatedAt: now,
+            expiresAt: now + FIREBASE_TTL_MS
+        };
+
+        var res = await fetch(url, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
+        if (!res.ok) {
+            throw new Error("Gửi điểm lên Firebase thất bại (HTTP " + res.status + ")");
+        }
+
+        // Tiện thể dọn các bản ghi cũ đã hết hạn trong cùng mã môn — chạy nền,
+        // không chờ và không làm hỏng kết quả gửi điểm nếu bước dọn dẹp lỗi.
+        pruneExpiredSiblings(payload.subjectCode, token).catch(function () {});
+
+        return body;
+    }
+
+    // Trả về null nếu chưa từng lưu, hoặc đã lưu quá 2 giờ (và sẽ tự xoá bản ghi cũ đó).
+    async function fetchScoreFromFirebase(studentCode, subjectCode) {
+        var token = await ensureFirebaseAuth();
+        var url = FIREBASE_CONFIG.databaseURL + firebaseScorePath(subjectCode, studentCode) + ".json?auth=" + token;
+
+        var res = await fetch(url, { method: "GET" });
+        if (!res.ok) {
+            throw new Error("Lấy điểm từ Firebase thất bại (HTTP " + res.status + ")");
+        }
+        var data = await res.json();
+        if (!data) {
+            return null;
+        }
+        if (!data.expiresAt || Date.now() > data.expiresAt) {
+            // hết hạn 2 giờ -> coi như không có, dọn luôn bản ghi cũ
+            fetch(url, { method: "DELETE" }).catch(function () {});
+            return null;
+        }
+        return data;
+    }
+    // FIREBASE_HELPERS_END
+
     // ---------- Shared helpers ----------
 
     function parseNum(str) {
@@ -58,7 +195,9 @@
     // =====================================================================
 
     function isScorePage() {
-        return !!document.querySelector(".score-input");
+        // Phải có ít nhất 1 ô điểm có data-criteriatype để phân biệt với trang
+        // chấm bài thi cuối môn (danh sách tiêu chí phẳng, không chia nhóm).
+        return !!document.querySelector(".score-input") && hasCriteriaTypeAttribute();
     }
 
     function getStudentCode() {
@@ -729,6 +868,347 @@
         });
     }
 
+    // =====================================================================
+    // Trang chấm bài thi cuối môn (Proctor/InputScore) — dùng chung domain
+    // với hệ thống chấm điểm tốt nghiệp nhưng KHÔNG có data-criteriatype,
+    // chỉ có 1 danh sách tiêu chí phẳng với trọng số riêng từng ô.
+    // =====================================================================
+
+    function hasCriteriaTypeAttribute() {
+        var inputs = document.querySelectorAll(".score-input");
+        for (var i = 0; i < inputs.length; i++) {
+            if ((inputs[i].getAttribute("data-criteriatype") || "").trim() !== "") return true;
+        }
+        return false;
+    }
+
+    function isFinalExamPage() {
+        return !!document.querySelector(".score-input") && !hasCriteriaTypeAttribute();
+    }
+
+    function roundToOneExam(value) {
+        if (value === null || value === undefined || isNaN(value)) return 0;
+        var sign = value < 0 ? -1 : 1;
+        var abs = Math.abs(value);
+        var rounded = Math.floor(abs * 10 + 0.5 + 1e-8) / 10;
+        return rounded * sign;
+    }
+
+    // Đọc mã mục (vd "GAM111.P.1") từ cột "Mã mục" (ô thứ 2 trong hàng) của 1 ô điểm.
+    function getExamItemCode(input) {
+        var row = input.closest("tr");
+        if (!row || !row.children || row.children.length < 2) return "";
+        return (row.children[1].textContent || "").trim();
+    }
+
+    function getExamItems() {
+        return Array.prototype.map.call(document.querySelectorAll(".score-input"), function (input) {
+            return {
+                input: input,
+                itemId: input.getAttribute("data-itemid") || "",
+                itemCode: getExamItemCode(input),
+                weight: parseFloat((input.getAttribute("data-weight") || "0").replace(",", ".")) || 0
+            };
+        });
+    }
+
+    function getExamSubjectCode() {
+        var items = getExamItems();
+        for (var i = 0; i < items.length; i++) {
+            var code = getSubjectCode(items[i].itemCode);
+            if (code) return code;
+        }
+        return "";
+    }
+
+    // ---------- Thuật toán chia điểm tổng vào từng ô theo trọng số ----------
+    // Ràng buộc: (1) tổng có trọng số (làm tròn 1 chữ số) đúng bằng target;
+    // (2) không phải tất cả các ô đều bằng nhau; (3) chênh lệch giữa ô cao nhất
+    // và thấp nhất không quá maxSpread. Trả về mảng số điểm (đã làm tròn 1 số
+    // thập phân), cùng thứ tự với weights truyền vào.
+    function distributeScoreAcrossWeights(target, weights, options) {
+        options = options || {};
+        var scaleMax = options.scaleMax !== undefined ? options.scaleMax : 10;
+        var maxSpread = options.maxSpread !== undefined ? options.maxSpread : 3;
+        var n = weights.length;
+
+        if (n === 0) return [];
+        var clampedTarget = Math.min(scaleMax, Math.max(0, target));
+
+        if (n === 1) {
+            return [roundToOneExam(clampedTarget)];
+        }
+
+        var totalWeight = weights.reduce(function (a, b) { return a + b; }, 0) || 100;
+
+        function weightedRoundedTotal(vals) {
+            var sum = 0;
+            for (var i = 0; i < n; i++) sum += vals[i] * weights[i];
+            return roundToOneExam(sum / totalWeight);
+        }
+
+        function buildCandidate(spreadBudget) {
+            var half = spreadBudget / 2;
+            var raw = weights.map(function () {
+                return (Math.random() * 2 - 1) * half;
+            });
+            var wMean = 0;
+            for (var i = 0; i < n; i++) wMean += weights[i] * raw[i];
+            wMean = wMean / totalWeight;
+            var deviations = raw.map(function (d) { return d - wMean; });
+            var vals = deviations.map(function (d) {
+                return Math.min(scaleMax, Math.max(0, clampedTarget + d));
+            });
+            return vals.map(roundToOneExam);
+        }
+
+        var best = null;
+        var bestDiff = Infinity;
+
+        for (var attempt = 0; attempt < 40; attempt++) {
+            // giảm dần biên độ dao động ban đầu để nhường chỗ cho bước hiệu chỉnh sau
+            var spreadBudget = Math.min(maxSpread, scaleMax) * 0.85;
+            var candidate = buildCandidate(spreadBudget);
+            candidate = correctToExactTotal(candidate, weights, totalWeight, clampedTarget, scaleMax, maxSpread);
+
+            var achieved = weightedRoundedTotal(candidate);
+            var diff = Math.abs(achieved - clampedTarget);
+            var spreadOk = (Math.max.apply(null, candidate) - Math.min.apply(null, candidate)) <= maxSpread + 1e-9;
+            var varied = new Set(candidate.map(function (v) { return v.toFixed(1); })).size > 1;
+
+            if (diff < bestDiff && spreadOk) {
+                best = candidate;
+                bestDiff = diff;
+            }
+            if (diff < 1e-9 && spreadOk && (varied || clampedTarget <= 0 || clampedTarget >= scaleMax)) {
+                return candidate;
+            }
+        }
+
+        return best || weights.map(function () { return roundToOneExam(clampedTarget); });
+    }
+
+    // Nudge dần từng bước 0.1 trên ô có trọng số lớn nhất (rồi tới ô kế tiếp nếu
+    // không còn dư địa) để tổng có trọng số (đã làm tròn) khớp đúng target.
+    function correctToExactTotal(vals, weights, totalWeight, target, scaleMax, maxSpread) {
+        var n = vals.length;
+        var order = weights
+            .map(function (w, i) { return i; })
+            .sort(function (a, b) { return weights[b] - weights[a]; });
+
+        function weightedRoundedTotal(v) {
+            var sum = 0;
+            for (var i = 0; i < n; i++) sum += v[i] * weights[i];
+            return roundToOneExam(sum / totalWeight);
+        }
+
+        var current = vals.slice();
+        var iterations = 0;
+        while (iterations < 60) {
+            var achieved = weightedRoundedTotal(current);
+            var diff = achieved - target;
+            if (Math.abs(diff) < 1e-9) break;
+
+            var moved = false;
+            for (var oi = 0; oi < order.length; oi++) {
+                var idx = order[oi];
+                var step = diff > 0 ? -0.1 : 0.1;
+                var candidateVal = roundToOneExam(current[idx] + step);
+                if (candidateVal < 0 || candidateVal > scaleMax) continue;
+
+                var trial = current.slice();
+                trial[idx] = candidateVal;
+                var trialSpread = Math.max.apply(null, trial) - Math.min.apply(null, trial);
+                if (trialSpread > maxSpread + 1e-9) continue;
+
+                current = trial;
+                moved = true;
+                break;
+            }
+            if (!moved) break;
+            iterations++;
+        }
+        return current;
+    }
+
+    function fillExamScore(rawTarget) {
+        var target = parseNum(rawTarget);
+        if (isNaN(target)) {
+            showToast("Giá trị không hợp lệ");
+            return false;
+        }
+        target = clamp0to10(target);
+
+        var items = getExamItems().filter(function (it) { return !it.input.disabled; });
+        if (!items.length) {
+            showToast("Không tìm thấy ô điểm nào trên trang");
+            return false;
+        }
+
+        var weights = items.map(function (it) { return it.weight; });
+        var values = distributeScoreAcrossWeights(target, weights, { scaleMax: 10, maxSpread: 3 });
+
+        items.forEach(function (it, index) {
+            setInputValue(it.input, values[index].toFixed(1));
+        });
+
+        showToast("Đã điền " + items.length + " ô, tổng ≈ " + target.toFixed(1));
+        return true;
+    }
+
+    // ---------- Gửi / lấy điểm qua Firebase ----------
+
+    async function sendExamScoreToFirebase(panel) {
+        var studentCode = getStudentCode();
+        var subjectCode = getExamSubjectCode();
+        if (!studentCode || !subjectCode) {
+            showToast("Không xác định được mã sinh viên hoặc mã môn trên trang này");
+            return;
+        }
+
+        var items = getExamItems();
+        var scores = {};
+        var hasEmpty = false;
+        items.forEach(function (it) {
+            var raw = (it.input.value || "").trim();
+            if (raw === "") { hasEmpty = true; return; }
+            var code = it.itemCode || it.itemId;
+            // Mã mục dạng "GAM111.P.1" chứa dấu "." — RTDB không cho phép ký tự này
+            // trong key (kể cả key lồng bên trong JSON, không riêng gì path URL).
+            if (code) scores[firebaseSafeKey(code)] = raw;
+        });
+        if (hasEmpty) {
+            showToast("Còn ô điểm trống — điền đủ trước khi gửi");
+            return;
+        }
+
+        var generalNoteEl = document.querySelector("#txtGeneralNote");
+        updateStatus("Đang gửi điểm lên Firebase...");
+        try {
+            await sendScoreToFirebase({
+                studentCode: studentCode,
+                subjectCode: subjectCode,
+                scores: scores,
+                note: generalNoteEl ? generalNoteEl.value : ""
+            });
+            updateStatus("Đã gửi điểm SV " + studentCode + " (" + subjectCode + ") lúc " + new Date().toLocaleTimeString());
+            showToast("Đã gửi điểm lên Firebase");
+        } catch (e) {
+            updateStatus("Gửi điểm thất bại: " + e.message);
+            showToast("Gửi điểm thất bại: " + e.message);
+        }
+    }
+
+    async function fetchExamScoreFromFirebase(panel) {
+        var studentCode = getStudentCode();
+        var subjectCode = getExamSubjectCode();
+        if (!studentCode || !subjectCode) {
+            showToast("Không xác định được mã sinh viên hoặc mã môn trên trang này");
+            return;
+        }
+
+        updateStatus("Đang tìm điểm đã lưu trên Firebase...");
+        try {
+            var data = await fetchScoreFromFirebase(studentCode, subjectCode);
+            if (!data) {
+                updateStatus("Không tìm thấy điểm đã lưu (chưa gửi hoặc đã quá 2 giờ)");
+                showToast("Không tìm thấy điểm đã lưu cho SV này");
+                return;
+            }
+
+            var items = getExamItems();
+            var applied = 0;
+            items.forEach(function (it) {
+                var code = it.itemCode || it.itemId;
+                var safeCode = code ? firebaseSafeKey(code) : "";
+                if (safeCode && data.scores && data.scores[safeCode] !== undefined) {
+                    setInputValue(it.input, data.scores[safeCode]);
+                    applied++;
+                }
+            });
+
+            var generalNoteEl = document.querySelector("#txtGeneralNote");
+            if (generalNoteEl && data.note !== undefined) {
+                generalNoteEl.value = data.note;
+            }
+
+            updateStatus("Đã lấy điểm SV " + studentCode + " (" + subjectCode + "), khớp " + applied + "/" + items.length + " ô");
+            showToast("Đã lấy điểm về (" + applied + " ô)");
+        } catch (e) {
+            updateStatus("Lấy điểm thất bại: " + e.message);
+            showToast("Lấy điểm thất bại: " + e.message);
+        }
+    }
+
+    function buildExamPanel() {
+        var panel = document.createElement("div");
+        panel.id = "epsaf-panel";
+        panel.innerHTML =
+            '<div id="epsaf-header">' +
+                '<span>⚡ Auto điền điểm thi</span>' +
+                '<button type="button" id="epsaf-toggle" title="Thu gọn / Mở rộng">–</button>' +
+            "</div>" +
+            '<div id="epsaf-body">' +
+                '<div class="epsaf-row">' +
+                    '<label>Điểm tổng</label>' +
+                    '<input type="text" inputmode="decimal" id="epsaf-exam-target" placeholder="0-10">' +
+                    '<button type="button" id="epsaf-exam-fill" class="epsaf-fill-btn">Điền</button>' +
+                "</div>" +
+                '<div class="epsaf-secretary-intro">Tự động chia điểm vào từng ô theo hệ số sao cho tổng đúng bằng điểm nhập — các ô không bằng nhau và không lệch nhau quá 3 điểm.</div>' +
+                '<hr>' +
+                '<div class="epsaf-row">' +
+                    '<label>Ghi chú</label>' +
+                    '<input type="text" id="epsaf-note-text" placeholder="Nội dung ghi chú">' +
+                    '<button type="button" id="epsaf-fill-notes" class="epsaf-fill-btn">Điền</button>' +
+                "</div>" +
+                '<div class="epsaf-secretary-intro">Áp dụng cho tất cả ô ghi chú theo tiêu chí và luôn điền cả vào Ghi chú chung.</div>' +
+                '<hr>' +
+                '<div class="epsaf-copy-row">' +
+                    '<button type="button" id="epsaf-exam-send">📤 Chia sẻ điểm + nhận xét</button>' +
+                    '<button type="button" id="epsaf-exam-fetch">📥 Tham khảo điểm + nhận xét</button>' +
+                "</div>" +
+                '<div id="epsaf-status">Chưa gửi/lấy điểm nào</div>' +
+            "</div>";
+        document.body.appendChild(panel);
+
+        var body = panel.querySelector("#epsaf-body");
+        var toggleBtn = panel.querySelector("#epsaf-toggle");
+        toggleBtn.addEventListener("click", function () {
+            var collapsed = body.style.display === "none";
+            body.style.display = collapsed ? "" : "none";
+            toggleBtn.textContent = collapsed ? "–" : "+";
+        });
+
+        panel.querySelector("#epsaf-exam-fill").addEventListener("click", function () {
+            fillExamScore(document.getElementById("epsaf-exam-target").value);
+        });
+        document.getElementById("epsaf-exam-target").addEventListener("keydown", function (e) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                panel.querySelector("#epsaf-exam-fill").click();
+            }
+        });
+
+        panel.querySelector("#epsaf-fill-notes").addEventListener("click", function () {
+            var text = document.getElementById("epsaf-note-text").value;
+            // Trang thi cuối môn: luôn điền cả vào Ghi chú chung, không cần checkbox
+            fillAllNotes(text, true);
+        });
+        document.getElementById("epsaf-note-text").addEventListener("keydown", function (e) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                panel.querySelector("#epsaf-fill-notes").click();
+            }
+        });
+
+        panel.querySelector("#epsaf-exam-send").addEventListener("click", function () {
+            sendExamScoreToFirebase(panel);
+        });
+        panel.querySelector("#epsaf-exam-fetch").addEventListener("click", function () {
+            fetchExamScoreFromFirebase(panel);
+        });
+    }
+
     // ---------- Init ----------
 
     function init() {
@@ -738,6 +1218,8 @@
             buildSecretaryPanel();
         } else if (isChairPage()) {
             buildChairPanel();
+        } else if (isFinalExamPage()) {
+            buildExamPanel();
         }
     }
 
